@@ -1,0 +1,104 @@
+name: CI STUDENT_ID
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-student-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Typecheck, Format, Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck
+
+      - name: Prettier check
+        id: prettier
+        continue-on-error: true
+        run: npm run format:check
+
+      - name: Test with JUnit report
+        id: test
+        continue-on-error: true
+        run: |
+          mkdir -p reports
+          npm run test -- --reporter=default --reporter=junit --outputFile.junit=reports/vitest-junit.xml
+
+      - name: Publish test result summary
+        if: always()
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+          const reportPath = 'reports/vitest-junit.xml';
+
+          let markdown = '## Vitest Test Results\n\n';
+          if (!fs.existsSync(reportPath)) {
+            markdown += '> No JUnit report was generated. Check whether the test command started correctly.\n';
+            fs.appendFileSync(summaryPath, markdown);
+            process.exit(0);
+          }
+
+          const xml = fs.readFileSync(reportPath, 'utf8');
+          const suiteTag = xml.match(/<testsuites\b([^>]*)>/) || xml.match(/<testsuite\b([^>]*)>/);
+          const attrs = {};
+          if (suiteTag) {
+            for (const match of suiteTag[1].matchAll(/(\w+)="([^"]*)"/g)) {
+              attrs[match[1]] = match[2];
+            }
+          }
+
+          const tests = attrs.tests ?? '0';
+          const failures = attrs.failures ?? '0';
+          const errors = attrs.errors ?? '0';
+          const skipped = attrs.skipped ?? '0';
+          const time = attrs.time ?? '0';
+
+          markdown += `| Tests | Failures | Errors | Skipped | Time |\n`;
+          markdown += `| ---: | ---: | ---: | ---: | ---: |\n`;
+          markdown += `| ${tests} | ${failures} | ${errors} | ${skipped} | ${time}s |\n\n`;
+          markdown += 'The full JUnit XML report is uploaded as a workflow artifact named `vitest-junit-report`.\n';
+
+          fs.appendFileSync(summaryPath, markdown);
+          NODE
+
+      - name: Upload JUnit test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-junit-report
+          path: reports/vitest-junit.xml
+          if-no-files-found: warn
+
+      - name: Fail pipeline if any check failed
+        if: steps.typecheck.outcome == 'failure' || steps.prettier.outcome == 'failure' || steps.test.outcome == 'failure'
+        run: |
+          echo 'One or more CI checks failed.'
+          echo 'typecheck: ${{ steps.typecheck.outcome }}'
+          echo 'prettier:  ${{ steps.prettier.outcome }}'
+          echo 'test:      ${{ steps.test.outcome }}'
+          exit 1
