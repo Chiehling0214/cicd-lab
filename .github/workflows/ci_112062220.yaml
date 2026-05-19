@@ -1,0 +1,61 @@
+name: CI 112062220
+
+on:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  build-and-test:
+    name: Typecheck, Format Check, and Test
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      checks: write
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Prettier check
+        run: npm run format:check
+
+      - name: Test with JUnit report
+        run: |
+          mkdir -p reports
+          npm run test -- --reporter=default --reporter=junit --outputFile.junit=reports/vitest-junit.xml
+
+      - name: Publish test result summary
+        if: always()
+        run: |
+          echo "## Vitest Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "JUnit test report path: \`reports/vitest-junit.xml\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f reports/vitest-junit.xml ]; then
+            echo "Test report was generated successfully." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Test report was not generated." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload JUnit test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-junit-report
+          path: reports/vitest-junit.xml
+          if-no-files-found: warn
