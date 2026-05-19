@@ -3,7 +3,7 @@ name: CI 112062220
 on:
   push:
     branches:
-      - '**'
+      - "**"
 
 jobs:
   build-and-test:
